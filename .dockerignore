@@ -1,0 +1,81 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Documentation
+# README.md
+# docs/
+# *.md
+
+# Development
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Logs (will be created at runtime)
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Local configuration
+.env.local
+.env.production
+.env.staging
+
+[tool.hatch.build.targets.wheel]
+packages = ["api", "core", "schemas"]

@@ -181,6 +181,14 @@ Your job is to update ONLY what the instruction requests while preserving EVERYT
 - Do not rename anything unless explicitly instructed
 - Keep the same useCase
 
+Schema enforcement for ALL entities, attributes, and relationships (including newly added ones):
+- Every entity MUST have a non-null `id`, a non-empty `name`, and a non-null `type` that is exactly either "LOGICAL" or "PHYSICAL".
+- For newly added entities, default `type` to "LOGICAL" unless the instruction explicitly requires PHYSICAL.
+- For LOGICAL entities, set `tableName`, `systemName`, and `environmentName` to null.
+- For PHYSICAL entities, set `tableName` to the table name and `systemName`/`environmentName` appropriately or null if unknown.
+- Every attribute MUST include `id`, `name`, and `type` (string); include `isPrimaryKey` as a boolean (default false if unknown).
+- Every relationship MUST include `id`, `fromEntity`, `toEntity`, `type` ("one-to-one" | "one-to-many" | "many-to-many"), and `name`. Use ONLY entity IDs for `fromEntity`/`toEntity`.
+
 CRITICAL: You MUST update the "message" field to clearly explain what changes were made to the model. The message should:
 - Describe the specific updates that were applied
 - Be conversational and user-friendly
@@ -197,9 +205,10 @@ Hard constraints:
 Process:
 1) Read the current model
 2) Apply the instruction minimally
-3) Update the message field to reflect the changes made
+3) Update the message field to reflect the changes made (summarize additions/edits/deletions with entity and attribute names)
 4) Verify constraints
-5) Return the FULL updated LogicalPhysicalModel (all entities, relationships, and useCase) — do NOT return only the changed parts or a single entity
+5) Ensure no entity has a null `type` and that all IDs are present
+6) Return the FULL updated LogicalPhysicalModel (all entities, relationships, and useCase) — do NOT return only the changed parts or a single entity
 6) Return only the updated JSON object with no extra text
 
 Example message updates:

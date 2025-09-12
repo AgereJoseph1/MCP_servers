@@ -1,6 +1,6 @@
 """Model-related schemas for the logical data modeling assistant."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from uuid import UUID
 from typing import List, Dict, Any, Literal, Optional
 
@@ -93,3 +93,15 @@ class SessionUpdateLogicalModelLLMRequest(BaseModel):
     """
     session_id: str = Field(..., description="Conversation session ID containing the model to update")
     instruction: str = Field(..., description="Natural language instruction for the update")
+
+
+class UpdateLogicalModelLLMDirectRequest(BaseModel):
+    """Request to update a logical model via LLM using a provided model and instruction."""
+    current_model: Dict[str, Any] = Field(..., description="The current LogicalPhysicalModel JSON to update")
+    instruction: str = Field(..., description="Natural language instruction for the update")
+
+
+class UpdateLogicalModelLLMDirectResponse(BaseModel):
+    """Response containing both the original and updated models."""
+    original_model: Dict[str, Any] = Field(..., description="The original model passed in the request")
+    updated_model: Dict[str, Any] = Field(..., description="The updated model produced by the LLM")

@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Query, HTTPException
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Dict, Tuple
+from pydantic import BaseModel, Field
 from schemas.api import (
     QueryRequest,
     VectorStoreQueryRequest,
     VectorStoreQueryResponse,
-    SessionUpdateLogicalModelLLMRequest,
+    UpdateLogicalModelLLMDirectRequest,
 )
 from schemas.data_model import LogicalPhysicalModel
 
@@ -19,6 +20,16 @@ from core.logging_config import get_logger
 import uuid
 import httpx
 import json
+import asyncio
+
+from core.lms_service import (
+    get_tables_from_lms,
+    get_embedding_batch,
+    assign_column_similarities,
+    adjust_score,
+)
+from schemas.lms_service import LMSQueryDocument, LMSQueryRequest
+from schemas.data_model import Attribute, LogPhysEntity
 
 
 logger = get_logger('mcp')
@@ -26,6 +37,237 @@ logger = get_logger('mcp')
 router = APIRouter(tags=["MCP Tools"])
 
 
+
+# The Erwin upstream API for automating asset creation
+ERWIN_AUTOMATE_ASSET_URL = "http://51.103.210.156:8080/ErwinAIService/api/beta/v1/automateAssetCreation"
+
+
+class AssetCreationRequest(BaseModel):
+    """
+    Generic payload wrapper for forwarding content to the Erwin asset creation endpoint.
+    """
+    content: Dict[str, Any]
+
+
+@router.post(
+    "/automate-asset-creation",
+    operation_id="automate_asset_creation",
+    tags=["MCP Tools"],
+)
+async def automate_asset_creation_tool(body: AssetCreationRequest):
+    """
+    MCP Tool Endpoint: Forward a JSON schema to Erwin to automate asset creation.
+
+    Accepts a payload with a `content` object and forwards it upstream. Returns the upstream
+    JSON directly when available, or a minimal status/text object otherwise.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                ERWIN_AUTOMATE_ASSET_URL,
+                headers={
+                    "accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                json=body.model_dump(),
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Upstream connection error: {exc}")
+
+    if resp.headers.get("content-type", "").startswith("application/json"):
+        return resp.json()
+    return {"status_code": resp.status_code, "text": resp.text}
+
+
+class LMSQueryInput(BaseModel):
+    """Input schema for MCP LMS query tool."""
+    model_name: Optional[str] = Field(None, description="Optional environment name to pre-filter results")
+    entity: Dict[str, Any] = Field(..., description="Entity object with id, name, and attributes")
+    limit: int = Field(25, description="Max number of tables to retrieve")
+    w_base: float = Field(0.25, description="Base weight in final score aggregation")
+    w_columns: float = Field(0.4, description="Column similarity weight")
+    w_auth: float = Field(0.3, description="Additional weighting term")
+
+@router.post(
+    "/lms-query",
+    tags=["MCP Tools"],
+    operation_id="lms_query",
+)
+async def mcp_lms_query(
+    request: LMSQueryInput,
+):
+    """
+    MCP Tool Endpoint: Query LMS for candidate physical tables matching a logical entity.
+
+    This endpoint mirrors the LMS query logic and returns scored candidate tables enriched
+    with metadata and a built `LogPhysEntity` for downstream ERwin ingestion.
+
+    Purpose:
+    - Retrieve likely physical tables for a given logical entity name and attributes.
+    - Compute semantic similarities between entity attributes and table columns.
+    - Adjust and return scores with optional environment filtering.
+
+    Parameters:
+    - request (LMSQueryRequest):
+      - model_name (str | None): Optional environment name to pre-filter results.
+      - entity (Entity): Logical entity containing `name` and `attributes`.
+      - limit (int): Max number of tables to retrieve.
+      - w_base (float): Base weight in final score aggregation.
+      - w_columns (float): Column similarity weight.
+      - w_auth (float): Additional weighting term (e.g., authority/source).
+
+    Response:
+    - list[tuple[LMSQueryDocument, float]]: Each item is (document, score), where document:
+      - has flattened `metadata` including `tableName`, `systemName`, `environmentName`, `columns`.
+      - includes an `entity` field representing a `LogPhysEntity` derived from metadata.
+
+    Notes:
+    - If `model_name` is provided but yields no results, the query is retried without the filter.
+    - Column embeddings are computed in batch for performance.
+    - Metadata is flattened when nested under `metadata.metadata` for frontend compatibility.
+    """
+    try:
+        # Convert LMSQueryInput to LMSQueryRequest
+        from schemas.lms_service import LMSQueryRequest
+        from schemas.data_model import Entity, Attribute
+        
+        # Extract entity from dict and convert to Entity object
+        entity_dict = request.entity
+        attributes = []
+        for attr_dict in entity_dict.get('attributes', []):
+            attr = Attribute(
+                id=attr_dict['id'],
+                name=attr_dict['name'],
+                type=attr_dict['type'],
+                isPrimaryKey=attr_dict.get('isPrimaryKey', False),
+                isForeignKey=attr_dict.get('isForeignKey', False)
+            )
+            attributes.append(attr)
+        
+        entity = Entity(
+            id=entity_dict['id'],
+            name=entity_dict['name'],
+            attributes=attributes
+        )
+        
+        # Create LMSQueryRequest
+        lms_request = LMSQueryRequest(
+            model_name=request.model_name,
+            entity=entity,
+            limit=request.limit,
+            w_base=request.w_base,
+            w_columns=request.w_columns,
+            w_auth=request.w_auth
+        )
+        
+        model_name = lms_request.model_name
+        entity = lms_request.entity
+        limit = lms_request.limit
+        w_base = lms_request.w_base
+        w_columns = lms_request.w_columns
+        w_auth = lms_request.w_auth
+
+        logger.info(f"Querying LMS service for entity: {entity.name}")
+        
+        pre_filter = {}
+        if model_name:
+            pre_filter = {'environmentName': model_name}
+
+        entity_columns = [attr.name for attr in entity.attributes]
+
+        query_result: List[Tuple[LMSQueryDocument, float]] = await get_tables_from_lms(
+            entity.name, limit=limit, pre_filter=pre_filter
+        )
+
+        if len(query_result) == 0 and pre_filter:
+            logger.info(
+                f"No tables with pre_filter for entity: {entity.name} and model: {model_name}. Retrying without pre_filter."
+            )
+            query_result = await get_tables_from_lms(entity.name, limit=limit, pre_filter={})
+
+        logger.info(f"{len(query_result)} tables returned from LMS service")
+
+        if len(query_result) == 0:
+            logger.info(
+                f"No tables returned from LMS service with name: {entity.name}"
+            )
+            return []
+
+        all_column_names: List[str] = []
+        for document, _ in query_result:
+            md = document.get('metadata', {})
+            nested_md = md.get('metadata', md)
+            columns = nested_md.get('columns', [])
+            all_column_names.extend([col.get('name', '') for col in columns if 'name' in col])
+
+        logger.info(f"Embedding {len(all_column_names)} column names")
+
+        embedding_tasks = [
+            get_embedding_batch(all_column_names),
+            get_embedding_batch(entity_columns)
+        ]
+
+        all_column_embeddings, entity_columns_embeddings = await asyncio.gather(*embedding_tasks)
+
+        await assign_column_similarities(query_result, all_column_embeddings, entity_columns_embeddings)
+
+        tables_with_adjusted_weights = await adjust_score(
+            query_result, w_base, w_columns, w_auth, len(entity_columns)
+        )
+
+        def build_entity_from_metadata(doc: dict) -> LogPhysEntity:
+            md = doc.get('metadata', {})
+            table_name = md.get('tableName', 'Unknown')
+            cols = md.get('columns', [])
+            attrs: list[Attribute] = []
+            base_id = doc.get('id', table_name)
+            for idx, col in enumerate(cols, start=1):
+                attr = Attribute(
+                    id=f"{base_id}.{idx}",
+                    name=col.get('name', f'col_{idx}'),
+                    type=(col.get('datatype') or 'STRING'),
+                    isPrimaryKey=False,
+                    isForeignKey=False,
+                )
+                attrs.append(attr)
+            return LogPhysEntity(
+                id=str(base_id),
+                name=str(table_name),
+                type="PHYSICAL",
+                attributes=attrs,
+                tableName=str(table_name) if table_name is not None else None,
+                systemName=md.get('systemName'),
+                environmentName=md.get('environmentName')
+            )
+
+        for document, _ in tables_with_adjusted_weights:
+            try:
+                md = document.get('metadata', {})
+                if isinstance(md, dict) and isinstance(md.get('metadata'), dict):
+                    nested = md.get('metadata', {})
+                    merged_md = {k: v for k, v in md.items() if k != 'metadata'}
+                    merged_md.update(nested)
+                    document['metadata'] = merged_md
+            except Exception:
+                pass
+
+            try:
+                matched_entity = build_entity_from_metadata(document)
+                document['entity'] = matched_entity.model_dump()
+            except Exception:
+                try:
+                    document['entity'] = build_entity_from_metadata(document).dict()
+                except Exception:
+                    document['entity'] = None
+
+        return tables_with_adjusted_weights
+    
+    except HTTPException as e:
+        logger.error(f"HTTPException during LMS query: {e}")
+        raise e
+    except Exception as e:
+        logger.error(f"Unexpected error during LMS query: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post(
     "/reference-fibo",
@@ -304,10 +546,10 @@ async def create_entire_logical_model(
         "scores": scores 
     }
 
-@router.post("/add-generated-data-product", tags=["MCP Tools"], operation_id="add_generated_data_product_to_erwin")
-async def add_generated_data_product_to_erwin(
-    logical_physical_model: LogicalPhysicalModel,
-):
+# @router.post("/add-generated-data-product", tags=["MCP Tools"], operation_id="add_generated_data_product_to_erwin")
+# async def add_generated_data_product_to_erwin(
+#     logical_physical_model: LogicalPhysicalModel,
+# ):
     """
     Ingests a generated data product into ERWIN by registering business assets and
     establishing associations with corresponding use cases and physical tables.
@@ -461,7 +703,7 @@ async def add_generated_data_product_to_erwin(
 #         raise HTTPException(500, detail=str(e))
 
 
-# --- Update Logical Model via LLM (session-based) ---
+# --- Update Logical Model via LLM (direct model input) ---
 
 @router.post(
     "/update-logical-model-llm",
@@ -469,25 +711,20 @@ async def add_generated_data_product_to_erwin(
     operation_id="update_logical_model_llm",
 )
 async def update_logical_model_llm(
-    request: SessionUpdateLogicalModelLLMRequest,
+    request: UpdateLogicalModelLLMDirectRequest,
 ) -> LogicalPhysicalModel:
     """
-    MCP Tool Endpoint: Apply a natural-language instruction to update the latest LogicalPhysicalModel
-    in the provided session, returning the full updated model.
+    MCP Tool Endpoint: Apply a natural-language instruction to the provided LogicalPhysicalModel
+    and return the full updated model.
 
-    - Fetches the latest assistant-produced model from conversation history using `session_id`.
+    - Takes the current model and instruction directly in the request body.
     - Applies the instruction using the LLM with strict update constraints.
-    - Preserves existing IDs, relationships, order; updates message to summarize changes.
+    - Preserves existing IDs, relationships, and order; updates message to summarize changes.
     - Returns a full LogicalPhysicalModel.
     """
     try:
-        from core.lms_service import get_latest_model_from_session_history
-
-        latest_model = await get_latest_model_from_session_history(request.session_id)
-        if not latest_model:
-            raise HTTPException(404, detail="No logical model found in conversation history for this session.")
-
-        updated_model = llm_update_logical_model(latest_model, request.instruction)
+        # Direct-only: require the current model and instruction in the request
+        updated_model = llm_update_logical_model(request.current_model, request.instruction)
         return updated_model
     except HTTPException as e:
         logger.error(f"HTTP error: {e.detail}")

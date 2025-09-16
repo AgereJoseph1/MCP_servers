@@ -79,338 +79,338 @@ async def automate_asset_creation_tool(body: AssetCreationRequest):
     return {"status_code": resp.status_code, "text": resp.text}
 
 
-class LMSQueryInput(BaseModel):
-    """Input schema for MCP LMS query tool."""
-    model_name: Optional[str] = Field(None, description="Optional environment name to pre-filter results")
-    entity: Dict[str, Any] = Field(..., description="Entity object with id, name, and attributes")
-    limit: int = Field(25, description="Max number of tables to retrieve")
-    w_base: float = Field(0.25, description="Base weight in final score aggregation")
-    w_columns: float = Field(0.4, description="Column similarity weight")
-    w_auth: float = Field(0.3, description="Additional weighting term")
+# class LMSQueryInput(BaseModel):
+#     """Input schema for MCP LMS query tool."""
+#     model_name: Optional[str] = Field(None, description="Optional environment name to pre-filter results")
+#     entity: Dict[str, Any] = Field(..., description="Entity object with id, name, and attributes")
+#     limit: int = Field(25, description="Max number of tables to retrieve")
+#     w_base: float = Field(0.25, description="Base weight in final score aggregation")
+#     w_columns: float = Field(0.4, description="Column similarity weight")
+#     w_auth: float = Field(0.3, description="Additional weighting term")
 
-@router.post(
-    "/lms-query",
-    tags=["MCP Tools"],
-    operation_id="lms_query",
-)
-async def mcp_lms_query(
-    request: LMSQueryInput,
-):
-    """
-    MCP Tool Endpoint: Query LMS for candidate physical tables matching a logical entity.
+# @router.post(
+#     "/lms-query",
+#     tags=["MCP Tools"],
+#     operation_id="lms_query",
+# )
+# async def mcp_lms_query(
+#     request: LMSQueryInput,
+# ):
+#     """
+#     MCP Tool Endpoint: Query LMS for candidate physical tables matching a logical entity.
 
-    This endpoint mirrors the LMS query logic and returns scored candidate tables enriched
-    with metadata and a built `LogPhysEntity` for downstream ERwin ingestion.
+#     This endpoint mirrors the LMS query logic and returns scored candidate tables enriched
+#     with metadata and a built `LogPhysEntity` for downstream ERwin ingestion.
 
-    Purpose:
-    - Retrieve likely physical tables for a given logical entity name and attributes.
-    - Compute semantic similarities between entity attributes and table columns.
-    - Adjust and return scores with optional environment filtering.
+#     Purpose:
+#     - Retrieve likely physical tables for a given logical entity name and attributes.
+#     - Compute semantic similarities between entity attributes and table columns.
+#     - Adjust and return scores with optional environment filtering.
 
-    Parameters:
-    - request (LMSQueryRequest):
-      - model_name (str | None): Optional environment name to pre-filter results.
-      - entity (Entity): Logical entity containing `name` and `attributes`.
-      - limit (int): Max number of tables to retrieve.
-      - w_base (float): Base weight in final score aggregation.
-      - w_columns (float): Column similarity weight.
-      - w_auth (float): Additional weighting term (e.g., authority/source).
+#     Parameters:
+#     - request (LMSQueryRequest):
+#       - model_name (str | None): Optional environment name to pre-filter results.
+#       - entity (Entity): Logical entity containing `name` and `attributes`.
+#       - limit (int): Max number of tables to retrieve.
+#       - w_base (float): Base weight in final score aggregation.
+#       - w_columns (float): Column similarity weight.
+#       - w_auth (float): Additional weighting term (e.g., authority/source).
 
-    Response:
-    - list[tuple[LMSQueryDocument, float]]: Each item is (document, score), where document:
-      - has flattened `metadata` including `tableName`, `systemName`, `environmentName`, `columns`.
-      - includes an `entity` field representing a `LogPhysEntity` derived from metadata.
+#     Response:
+#     - list[tuple[LMSQueryDocument, float]]: Each item is (document, score), where document:
+#       - has flattened `metadata` including `tableName`, `systemName`, `environmentName`, `columns`.
+#       - includes an `entity` field representing a `LogPhysEntity` derived from metadata.
 
-    Notes:
-    - If `model_name` is provided but yields no results, the query is retried without the filter.
-    - Column embeddings are computed in batch for performance.
-    - Metadata is flattened when nested under `metadata.metadata` for frontend compatibility.
-    """
-    try:
-        # Convert LMSQueryInput to LMSQueryRequest
-        from schemas.lms_service import LMSQueryRequest
-        from schemas.data_model import Entity, Attribute
+#     Notes:
+#     - If `model_name` is provided but yields no results, the query is retried without the filter.
+#     - Column embeddings are computed in batch for performance.
+#     - Metadata is flattened when nested under `metadata.metadata` for frontend compatibility.
+#     """
+#     try:
+#         # Convert LMSQueryInput to LMSQueryRequest
+#         from schemas.lms_service import LMSQueryRequest
+#         from schemas.data_model import Entity, Attribute
         
-        # Extract entity from dict and convert to Entity object
-        entity_dict = request.entity
-        attributes = []
-        for attr_dict in entity_dict.get('attributes', []):
-            attr = Attribute(
-                id=attr_dict['id'],
-                name=attr_dict['name'],
-                type=attr_dict['type'],
-                isPrimaryKey=attr_dict.get('isPrimaryKey', False),
-                isForeignKey=attr_dict.get('isForeignKey', False)
-            )
-            attributes.append(attr)
+#         # Extract entity from dict and convert to Entity object
+#         entity_dict = request.entity
+#         attributes = []
+#         for attr_dict in entity_dict.get('attributes', []):
+#             attr = Attribute(
+#                 id=attr_dict['id'],
+#                 name=attr_dict['name'],
+#                 type=attr_dict['type'],
+#                 isPrimaryKey=attr_dict.get('isPrimaryKey', False),
+#                 isForeignKey=attr_dict.get('isForeignKey', False)
+#             )
+#             attributes.append(attr)
         
-        entity = Entity(
-            id=entity_dict['id'],
-            name=entity_dict['name'],
-            attributes=attributes
-        )
+#         entity = Entity(
+#             id=entity_dict['id'],
+#             name=entity_dict['name'],
+#             attributes=attributes
+#         )
         
-        # Create LMSQueryRequest
-        lms_request = LMSQueryRequest(
-            model_name=request.model_name,
-            entity=entity,
-            limit=request.limit,
-            w_base=request.w_base,
-            w_columns=request.w_columns,
-            w_auth=request.w_auth
-        )
+#         # Create LMSQueryRequest
+#         lms_request = LMSQueryRequest(
+#             model_name=request.model_name,
+#             entity=entity,
+#             limit=request.limit,
+#             w_base=request.w_base,
+#             w_columns=request.w_columns,
+#             w_auth=request.w_auth
+#         )
         
-        model_name = lms_request.model_name
-        entity = lms_request.entity
-        limit = lms_request.limit
-        w_base = lms_request.w_base
-        w_columns = lms_request.w_columns
-        w_auth = lms_request.w_auth
+#         model_name = lms_request.model_name
+#         entity = lms_request.entity
+#         limit = lms_request.limit
+#         w_base = lms_request.w_base
+#         w_columns = lms_request.w_columns
+#         w_auth = lms_request.w_auth
 
-        logger.info(f"Querying LMS service for entity: {entity.name}")
+#         logger.info(f"Querying LMS service for entity: {entity.name}")
         
-        pre_filter = {}
-        if model_name:
-            pre_filter = {'environmentName': model_name}
+#         pre_filter = {}
+#         if model_name:
+#             pre_filter = {'environmentName': model_name}
 
-        entity_columns = [attr.name for attr in entity.attributes]
+#         entity_columns = [attr.name for attr in entity.attributes]
 
-        query_result: List[Tuple[LMSQueryDocument, float]] = await get_tables_from_lms(
-            entity.name, limit=limit, pre_filter=pre_filter
-        )
+#         query_result: List[Tuple[LMSQueryDocument, float]] = await get_tables_from_lms(
+#             entity.name, limit=limit, pre_filter=pre_filter
+#         )
 
-        if len(query_result) == 0 and pre_filter:
-            logger.info(
-                f"No tables with pre_filter for entity: {entity.name} and model: {model_name}. Retrying without pre_filter."
-            )
-            query_result = await get_tables_from_lms(entity.name, limit=limit, pre_filter={})
+#         if len(query_result) == 0 and pre_filter:
+#             logger.info(
+#                 f"No tables with pre_filter for entity: {entity.name} and model: {model_name}. Retrying without pre_filter."
+#             )
+#             query_result = await get_tables_from_lms(entity.name, limit=limit, pre_filter={})
 
-        logger.info(f"{len(query_result)} tables returned from LMS service")
+#         logger.info(f"{len(query_result)} tables returned from LMS service")
 
-        if len(query_result) == 0:
-            logger.info(
-                f"No tables returned from LMS service with name: {entity.name}"
-            )
-            return []
+#         if len(query_result) == 0:
+#             logger.info(
+#                 f"No tables returned from LMS service with name: {entity.name}"
+#             )
+#             return []
 
-        all_column_names: List[str] = []
-        for document, _ in query_result:
-            md = document.get('metadata', {})
-            nested_md = md.get('metadata', md)
-            columns = nested_md.get('columns', [])
-            all_column_names.extend([col.get('name', '') for col in columns if 'name' in col])
+#         all_column_names: List[str] = []
+#         for document, _ in query_result:
+#             md = document.get('metadata', {})
+#             nested_md = md.get('metadata', md)
+#             columns = nested_md.get('columns', [])
+#             all_column_names.extend([col.get('name', '') for col in columns if 'name' in col])
 
-        logger.info(f"Embedding {len(all_column_names)} column names")
+#         logger.info(f"Embedding {len(all_column_names)} column names")
 
-        embedding_tasks = [
-            get_embedding_batch(all_column_names),
-            get_embedding_batch(entity_columns)
-        ]
+#         embedding_tasks = [
+#             get_embedding_batch(all_column_names),
+#             get_embedding_batch(entity_columns)
+#         ]
 
-        all_column_embeddings, entity_columns_embeddings = await asyncio.gather(*embedding_tasks)
+#         all_column_embeddings, entity_columns_embeddings = await asyncio.gather(*embedding_tasks)
 
-        await assign_column_similarities(query_result, all_column_embeddings, entity_columns_embeddings)
+#         await assign_column_similarities(query_result, all_column_embeddings, entity_columns_embeddings)
 
-        tables_with_adjusted_weights = await adjust_score(
-            query_result, w_base, w_columns, w_auth, len(entity_columns)
-        )
+#         tables_with_adjusted_weights = await adjust_score(
+#             query_result, w_base, w_columns, w_auth, len(entity_columns)
+#         )
 
-        def build_entity_from_metadata(doc: dict) -> LogPhysEntity:
-            md = doc.get('metadata', {})
-            table_name = md.get('tableName', 'Unknown')
-            cols = md.get('columns', [])
-            attrs: list[Attribute] = []
-            base_id = doc.get('id', table_name)
-            for idx, col in enumerate(cols, start=1):
-                attr = Attribute(
-                    id=f"{base_id}.{idx}",
-                    name=col.get('name', f'col_{idx}'),
-                    type=(col.get('datatype') or 'STRING'),
-                    isPrimaryKey=False,
-                    isForeignKey=False,
-                )
-                attrs.append(attr)
-            return LogPhysEntity(
-                id=str(base_id),
-                name=str(table_name),
-                type="PHYSICAL",
-                attributes=attrs,
-                tableName=str(table_name) if table_name is not None else None,
-                systemName=md.get('systemName'),
-                environmentName=md.get('environmentName')
-            )
+#         def build_entity_from_metadata(doc: dict) -> LogPhysEntity:
+#             md = doc.get('metadata', {})
+#             table_name = md.get('tableName', 'Unknown')
+#             cols = md.get('columns', [])
+#             attrs: list[Attribute] = []
+#             base_id = doc.get('id', table_name)
+#             for idx, col in enumerate(cols, start=1):
+#                 attr = Attribute(
+#                     id=f"{base_id}.{idx}",
+#                     name=col.get('name', f'col_{idx}'),
+#                     type=(col.get('datatype') or 'STRING'),
+#                     isPrimaryKey=False,
+#                     isForeignKey=False,
+#                 )
+#                 attrs.append(attr)
+#             return LogPhysEntity(
+#                 id=str(base_id),
+#                 name=str(table_name),
+#                 type="PHYSICAL",
+#                 attributes=attrs,
+#                 tableName=str(table_name) if table_name is not None else None,
+#                 systemName=md.get('systemName'),
+#                 environmentName=md.get('environmentName')
+#             )
 
-        for document, _ in tables_with_adjusted_weights:
-            try:
-                md = document.get('metadata', {})
-                if isinstance(md, dict) and isinstance(md.get('metadata'), dict):
-                    nested = md.get('metadata', {})
-                    merged_md = {k: v for k, v in md.items() if k != 'metadata'}
-                    merged_md.update(nested)
-                    document['metadata'] = merged_md
-            except Exception:
-                pass
+#         for document, _ in tables_with_adjusted_weights:
+#             try:
+#                 md = document.get('metadata', {})
+#                 if isinstance(md, dict) and isinstance(md.get('metadata'), dict):
+#                     nested = md.get('metadata', {})
+#                     merged_md = {k: v for k, v in md.items() if k != 'metadata'}
+#                     merged_md.update(nested)
+#                     document['metadata'] = merged_md
+#             except Exception:
+#                 pass
 
-            try:
-                matched_entity = build_entity_from_metadata(document)
-                document['entity'] = matched_entity.model_dump()
-            except Exception:
-                try:
-                    document['entity'] = build_entity_from_metadata(document).dict()
-                except Exception:
-                    document['entity'] = None
+#             try:
+#                 matched_entity = build_entity_from_metadata(document)
+#                 document['entity'] = matched_entity.model_dump()
+#             except Exception:
+#                 try:
+#                     document['entity'] = build_entity_from_metadata(document).dict()
+#                 except Exception:
+#                     document['entity'] = None
 
-        return tables_with_adjusted_weights
+#         return tables_with_adjusted_weights
     
-    except HTTPException as e:
-        logger.error(f"HTTPException during LMS query: {e}")
-        raise e
-    except Exception as e:
-        logger.error(f"Unexpected error during LMS query: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+#     except HTTPException as e:
+#         logger.error(f"HTTPException during LMS query: {e}")
+#         raise e
+#     except Exception as e:
+#         logger.error(f"Unexpected error during LMS query: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post(
-    "/reference-fibo",
-    operation_id="reference_fibo",
-    tags=["MCP Tools"],
-    response_model=VectorStoreQueryResponse
-)
-async def reference_fibo(
-    request: VectorStoreQueryRequest,
-):
-    """
-    MCP Tool Endpoint: Query the FIBO (Financial Industry Business Ontology) reference database.
+# @router.post(
+#     "/reference-fibo",
+#     operation_id="reference_fibo",
+#     tags=["MCP Tools"],
+#     response_model=VectorStoreQueryResponse
+# )
+# async def reference_fibo(
+#     request: VectorStoreQueryRequest,
+# ):
+#     """
+#     MCP Tool Endpoint: Query the FIBO (Financial Industry Business Ontology) reference database.
     
-    This tool provides semantic search capabilities for the Financial Industry Business Ontology (FIBO)
-    reference database, enabling intelligent retrieval of financial domain knowledge, regulatory information,
-    and business ontology concepts. The tool leverages vector embeddings to find semantically similar
-    documents and concepts within the FIBORAG vector store.
+#     This tool provides semantic search capabilities for the Financial Industry Business Ontology (FIBO)
+#     reference database, enabling intelligent retrieval of financial domain knowledge, regulatory information,
+#     and business ontology concepts. The tool leverages vector embeddings to find semantically similar
+#     documents and concepts within the FIBORAG vector store.
     
-    **Purpose:**
-    - Enable semantic search across financial industry ontologies and reference materials
-    - Support data modeling and business analysis with domain-specific knowledge
-    - Provide access to regulatory compliance information and financial standards
-    - Facilitate intelligent document retrieval for financial domain experts
+#     **Purpose:**
+#     - Enable semantic search across financial industry ontologies and reference materials
+#     - Support data modeling and business analysis with domain-specific knowledge
+#     - Provide access to regulatory compliance information and financial standards
+#     - Facilitate intelligent document retrieval for financial domain experts
     
-    **Key Features:**
-    - Semantic similarity search using vector embeddings
-    - Configurable result count (k parameter)
-    - Optional pre-filtering capabilities
-    - Real-time access to FIBO reference database
-    - Comprehensive error handling and logging
+#     **Key Features:**
+#     - Semantic similarity search using vector embeddings
+#     - Configurable result count (k parameter)
+#     - Optional pre-filtering capabilities
+#     - Real-time access to FIBO reference database
+#     - Comprehensive error handling and logging
     
-    **Parameters:**
-    - `query` (str): The search query string describing the information you're looking for
-    - `k` (int, default=4): Number of most relevant results to return (1-20 recommended)
-    - `pre_filter` (dict, default={}): Optional metadata filters to narrow search scope
+#     **Parameters:**
+#     - `query` (str): The search query string describing the information you're looking for
+#     - `k` (int, default=4): Number of most relevant results to return (1-20 recommended)
+#     - `pre_filter` (dict, default={}): Optional metadata filters to narrow search scope
     
-    **Response Format:**
-    Returns a structured response containing:
-    - Original query string
-    - List of relevant documents with content, metadata, and similarity scores
-    - Total number of results found
+#     **Response Format:**
+#     Returns a structured response containing:
+#     - Original query string
+#     - List of relevant documents with content, metadata, and similarity scores
+#     - Total number of results found
     
-    **Use Cases:**
-    1. **Data Modeling**: Find relevant financial entities and relationships for logical data models
-    2. **Regulatory Compliance**: Search for compliance requirements and regulatory frameworks
-    3. **Business Analysis**: Retrieve domain-specific knowledge for financial analysis
-    4. **Documentation**: Access reference materials and standards documentation
-    5. **Research**: Explore financial industry ontologies and taxonomies
+#     **Use Cases:**
+#     1. **Data Modeling**: Find relevant financial entities and relationships for logical data models
+#     2. **Regulatory Compliance**: Search for compliance requirements and regulatory frameworks
+#     3. **Business Analysis**: Retrieve domain-specific knowledge for financial analysis
+#     4. **Documentation**: Access reference materials and standards documentation
+#     5. **Research**: Explore financial industry ontologies and taxonomies
     
-    **Example Queries:**
-    - "Bank for International Settlements regulatory requirements"
-    - "Financial instrument classification standards"
-    - "Risk management framework compliance"
-    - "Derivatives trading regulations"
-    - "Capital adequacy requirements"
+#     **Example Queries:**
+#     - "Bank for International Settlements regulatory requirements"
+#     - "Financial instrument classification standards"
+#     - "Risk management framework compliance"
+#     - "Derivatives trading regulations"
+#     - "Capital adequacy requirements"
     
-    **Example Usage:**
-    ```python
-    # Basic search
-    response = await reference_fibo({
-        "query": "Bank for International Settlements",
-        "k": 5,
-        "pre_filter": {}
-    })
+#     **Example Usage:**
+#     ```python
+#     # Basic search
+#     response = await reference_fibo({
+#         "query": "Bank for International Settlements",
+#         "k": 5,
+#         "pre_filter": {}
+#     })
     
-    # Filtered search
-    response = await reference_fibo({
-        "query": "risk management",
-        "k": 3,
-        "pre_filter": {"category": "compliance"}
-    })
-    ```
+#     # Filtered search
+#     response = await reference_fibo({
+#         "query": "risk management",
+#         "k": 3,
+#         "pre_filter": {"category": "compliance"}
+#     })
+#     ```
     
-    **Error Handling:**
-    - HTTP 400: Invalid request parameters
-    - HTTP 500: Internal server error or vector store connectivity issues
-    - Comprehensive logging for debugging and monitoring
+#     **Error Handling:**
+#     - HTTP 400: Invalid request parameters
+#     - HTTP 500: Internal server error or vector store connectivity issues
+#     - Comprehensive logging for debugging and monitoring
     
-    **Performance:**
-    - Typical response time: 1-3 seconds
-    - Supports concurrent requests
-    - Optimized for financial domain queries
+#     **Performance:**
+#     - Typical response time: 1-3 seconds
+#     - Supports concurrent requests
+#     - Optimized for financial domain queries
     
-    **Security:**
-    - Input validation and sanitization
-    - Rate limiting support
-    - Secure communication with vector store
+#     **Security:**
+#     - Input validation and sanitization
+#     - Rate limiting support
+#     - Secure communication with vector store
     
-    Returns:
-        VectorStoreQueryResponse: Structured response with query results and metadata
-    """
-    # session_id = str(uuid.uuid4())
-    logger.info(f"Querying vector store for: {request.query}")
+#     Returns:
+#         VectorStoreQueryResponse: Structured response with query results and metadata
+#     """
+#     # session_id = str(uuid.uuid4())
+#     logger.info(f"Querying vector store for: {request.query}")
     
-    # Vector store endpoint URL from config
-    vector_store_url = settings.fibo_vector_store_url
+#     # Vector store endpoint URL from config
+#     vector_store_url = settings.fibo_vector_store_url
     
-    # Prepare the request payload
-    payload = {
-        "query": request.query,
-        "k": request.k,
-        "pre_filter": request.pre_filter
-    }
+#     # Prepare the request payload
+#     payload = {
+#         "query": request.query,
+#         "k": request.k,
+#         "pre_filter": request.pre_filter
+#     }
     
-    headers = {
-        "accept": "application/json",
-        "Content-Type": "application/json"
-    }
+#     headers = {
+#         "accept": "application/json",
+#         "Content-Type": "application/json"
+#     }
     
-    try:
-        async with httpx.AsyncClient(timeout=9000.0) as client:
-            response = await client.post(
-                vector_store_url,
-                headers=headers,
-                json=payload
-            )
-            response.raise_for_status()
+#     try:
+#         async with httpx.AsyncClient(timeout=9000.0) as client:
+#             response = await client.post(
+#                 vector_store_url,
+#                 headers=headers,
+#                 json=payload
+#             )
+#             response.raise_for_status()
             
-            result_data = response.json()
+#             result_data = response.json()
             
-            # Handle case where vector store returns a list directly
-            if isinstance(result_data, list):
-                results = result_data
-            else:
-                results = result_data.get('results', [])
+#             # Handle case where vector store returns a list directly
+#             if isinstance(result_data, list):
+#                 results = result_data
+#             else:
+#                 results = result_data.get('results', [])
             
-            logger.info(f"Vector store query successful, returned {len(results)} results")
+#             logger.info(f"Vector store query successful, returned {len(results)} results")
             
-            return VectorStoreQueryResponse(
-                query=request.query,
-                results=results,
-                total_results=len(results)
-            )
+#             return VectorStoreQueryResponse(
+#                 query=request.query,
+#                 results=results,
+#                 total_results=len(results)
+#             )
             
-    except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error when querying vector store: {e.response.status_code} - {e.response.text}")
-        raise HTTPException(status_code=e.response.status_code, detail=f"Vector store query failed: {e.response.text}")
-    except httpx.RequestError as e:
-        logger.error(f"Request error when querying vector store: {e}")
-        raise HTTPException(status_code=500, detail=f"Vector store query failed: {str(e)}")
-    except Exception as e:
-        logger.error(f"Unexpected error when querying vector store: {e}")
-        raise HTTPException(status_code=500, detail=f"Vector store query failed: {str(e)}")
+#     except httpx.HTTPStatusError as e:
+#         logger.error(f"HTTP error when querying vector store: {e.response.status_code} - {e.response.text}")
+#         raise HTTPException(status_code=e.response.status_code, detail=f"Vector store query failed: {e.response.text}")
+#     except httpx.RequestError as e:
+#         logger.error(f"Request error when querying vector store: {e}")
+#         raise HTTPException(status_code=500, detail=f"Vector store query failed: {str(e)}")
+#     except Exception as e:
+#         logger.error(f"Unexpected error when querying vector store: {e}")
+#         raise HTTPException(status_code=500, detail=f"Vector store query failed: {str(e)}")
 
 
 
@@ -706,11 +706,11 @@ async def create_entire_logical_model(
 # --- Update Logical Model via LLM (direct model input) ---
 
 @router.post(
-    "/update-logical-model-llm",
+    "/update-logical-model",
     tags=["MCP Tools"],
-    operation_id="update_logical_model_llm",
+    operation_id="update_logical_model",
 )
-async def update_logical_model_llm(
+async def update_logical_model(
     request: UpdateLogicalModelLLMDirectRequest,
 ) -> LogicalPhysicalModel:
     """
